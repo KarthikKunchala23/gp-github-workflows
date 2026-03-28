@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS Credentials
-        uses: :contentReference[oaicite:0]{index=0}@v4
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::897722700244:role/gp-terraform-execution
           aws-region: ${{ inputs.aws_region }}
