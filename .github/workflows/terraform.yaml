@@ -1,0 +1,81 @@
+---
+name: Terraform Plan and Apply
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        required: true
+        type: string
+        default: terraform
+      environment:
+        required: true
+        type: string
+      aws_region:
+        required: true
+        type: string
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      TF_WORKSPACE: ${{ inputs.environment }}
+      TF_VAR_environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: :contentReference[oaicite:0]{index=0}@v4
+        with:
+          role-to-assume: arn:aws:iam::897722700244:role/gp-terraform-execution
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.6
+
+      - name: terraform init
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: init
+
+      - name: terraform validate
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: validate
+
+      - name: terraform plan
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: plan
+          args: -out=tfplan
+
+      - name: Analyze Plan
+        uses: KarthikKunchala23/gp-github-actions/analyze_plan@v1
+        with:
+          plan_file: ${{ inputs.working_directory }}/tfplan
+
+      - name: Validate Commit
+        id: validate
+        uses: KarthikKunchala23/gp-github-actions/validate-commit@v1
+
+      - name: terraform apply
+        if: steps.validate.outputs.allow_apply == 'true' 
+        uses: KarthikKunchala23/gp-github-actions/terraform@v1
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: apply
+          args: -auto-approve tfplan
