@@ -61,10 +61,11 @@ jobs:
         with:
           working_directory: ${{ inputs.working_directory }}
           command: plan
-          args: -out=${{ inputs.working_directory }}/tfplan
+          args: -out=tfplan
 
       - name: Convert plan to JSON
-        run: terraform show -json ${{ inputs.working_directory }}/tfplan > ${{ inputs.working_directory }}/plan.json
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform show -json tfplan > plan.json
         shell: bash
 
       - name: Analyze Plan
