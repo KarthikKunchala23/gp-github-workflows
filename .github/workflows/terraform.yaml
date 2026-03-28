@@ -67,6 +67,11 @@ jobs:
         run: terraform show -json ${{ inputs.working_directory }}/tfplan > ${{ inputs.working_directory }}/plan.json
         shell: bash
 
+      - name: Convert plan to JSON
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform show -json tfplan > plan.json
+        shell: bash
+
       - name: Analyze Plan
         uses: KarthikKunchala23/gp-github-actions/analyze_plan@main
         with:
