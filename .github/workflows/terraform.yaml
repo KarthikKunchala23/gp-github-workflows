@@ -56,6 +56,13 @@ jobs:
           working_directory: ${{ inputs.working_directory }}
           command: validate
 
+      - name: terraform format
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: fmt
+          args: -recursive
+    
       - name: terraform plan
         uses: KarthikKunchala23/gp-github-actions/terraform@main
         with:
