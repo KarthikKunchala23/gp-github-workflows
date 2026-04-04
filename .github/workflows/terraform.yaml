@@ -75,10 +75,10 @@ jobs:
         run: terraform show -json tfplan > plan.json
         shell: bash
 
-      - name: Analyze Plan
-        uses: KarthikKunchala23/gp-github-actions/analyze_plan@main
-        with:
-          plan_file: ${{ inputs.working_directory }}/plan.json
+      # - name: Analyze Plan
+      #   uses: KarthikKunchala23/gp-github-actions/analyze_plan@main
+      #   with:
+      #     plan_file: ${{ inputs.working_directory }}/plan.json
 
       - name: terraform apply
         # if: steps.validate.outputs.allow_apply == 'true' 
