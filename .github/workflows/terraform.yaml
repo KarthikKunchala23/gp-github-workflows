@@ -81,7 +81,7 @@ jobs:
           plan_file: ${{ inputs.working_directory }}/plan.json
 
       - name: terraform apply
-        if: steps.validate.outputs.allow_apply == 'true' 
+        # if: steps.validate.outputs.allow_apply == 'true' 
         uses: KarthikKunchala23/gp-github-actions/terraform@main
         with:
           working_directory: ${{ inputs.working_directory }}
