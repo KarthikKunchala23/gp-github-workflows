@@ -36,7 +36,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::897722700244:role/gp-terraform-execution
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
           aws-region: ${{ inputs.aws_region }}
 
       - name: Set up Terraform
