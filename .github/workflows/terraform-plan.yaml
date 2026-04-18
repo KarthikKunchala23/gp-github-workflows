@@ -1,0 +1,81 @@
+---
+name: Terraform Plan
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        required: true
+        type: string
+        default: terraform
+      environment:
+        required: true
+        type: string
+      aws_region:
+        required: true
+        type: string
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      TF_WORKSPACE: ${{ inputs.environment }}
+      TF_VAR_environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.6
+
+      - name: terraform init
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: init
+
+      - name: terraform validate
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: validate
+
+      - name: terraform format
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: fmt
+          args: -recursive
+    
+      - name: terraform plan
+        uses: KarthikKunchala23/gp-github-actions/terraform@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          command: plan
+          args: -out=tfplan
+
+      - name: Convert plan to JSON
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform show -json tfplan > plan.json
+        shell: bash
+
+      # - name: Analyze Plan
+      #   uses: KarthikKunchala23/gp-github-actions/analyze_plan@main
+      #   with:
+      #     plan_file: ${{ inputs.working_directory }}/plan.json
