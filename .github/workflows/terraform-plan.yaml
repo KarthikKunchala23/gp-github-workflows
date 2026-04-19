@@ -15,6 +15,12 @@ on:
         required: true
         type: string
 
+    secrets:
+      DB_USERNAME:
+        required: true
+      DB_PASSWORD:
+        required: true
+
 jobs:
   terraform:
     name: Terraform
@@ -28,6 +34,8 @@ jobs:
     env:
       TF_WORKSPACE: ${{ inputs.environment }}
       TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
 
     steps:
       - name: Checkout code
