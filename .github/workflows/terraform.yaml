@@ -21,6 +21,10 @@ on:
       DB_PASSWORD:
         required: true
 
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: true
+
 jobs:
   terraform:
     name: Terraform
