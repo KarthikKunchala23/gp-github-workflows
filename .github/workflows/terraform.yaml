@@ -17,9 +17,9 @@ on:
 
     secrets:
       DB_USERNAME:
-        required: true
+        required: false
       DB_PASSWORD:
-        required: true
+        required: false
 
 concurrency:
   group: terraform-${{ inputs.environment }}
