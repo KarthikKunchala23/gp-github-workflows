@@ -134,7 +134,7 @@ jobs:
       # 5. Docker image security
       # ------------------------------------------------
       - name: Build container image
-        if: inputs.scan_container
+        if: inputs.scan_container && inputs.scan_trivy
         run: |
           docker build \
             --file "${{ inputs.dockerfile }}" \
@@ -181,6 +181,7 @@ jobs:
           SEMGREP_RESULT: ${{ steps.semgrep.outcome }}
           TRIVY_FS_RESULT: ${{ steps.trivy_fs.outcome }}
           TRIVY_IMAGE_RESULT: ${{ steps.trivy_image.outcome }}
+          TRIVY_ENABLED: ${{ inputs.scan_trivy }}
         run: |
           failed=0
 
@@ -196,15 +197,17 @@ jobs:
             failed=1
           fi
 
-          if [ "$TRIVY_FS_RESULT" != "success" ]; then
-            echo "::error::Filesystem/dependency security gate failed."
-            failed=1
-          fi
+          if [ "$TRIVY_ENABLED" == "true" ]; then
+            if [ "$TRIVY_FS_RESULT" != "success" ]; then
+                echo "::error::Filesystem/dependency security gate failed."
+                failed=1
+            fi
 
-          if [ "$CONTAINER_SCAN" = "true" ] &&
-             [ "$TRIVY_IMAGE_RESULT" != "success" ]; then
-            echo "::error::Container image security gate failed."
-            failed=1
+            if [ "$CONTAINER_SCAN" = "true" ] &&
+                [ "$TRIVY_IMAGE_RESULT" != "success" ]; then
+                echo "::error::Container image security gate failed."
+                failed=1
+            fi
           fi
 
           if [ "$failed" -ne 0 ]; then
