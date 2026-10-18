@@ -60,18 +60,24 @@ jobs:
         uses: KarthikKunchala23/gp-github-actions/terraform@main
         with:
           working_directory: ${{ inputs.working_directory }}
+          environment: ${{ inputs.environment }}
+          aws_region: ${{ inputs.aws_region }}
           command: init
 
       - name: terraform validate
         uses: KarthikKunchala23/gp-github-actions/terraform@main
         with:
           working_directory: ${{ inputs.working_directory }}
+          environment: ${{ inputs.environment }}
+          aws_region: ${{ inputs.aws_region }}
           command: validate
 
       - name: terraform format
         uses: KarthikKunchala23/gp-github-actions/terraform@main
         with:
           working_directory: ${{ inputs.working_directory }}
+          environment: ${{ inputs.environment }}
+          aws_region: ${{ inputs.aws_region }}
           command: fmt
           args: -recursive
     
@@ -79,6 +85,8 @@ jobs:
         uses: KarthikKunchala23/gp-github-actions/terraform@main
         with:
           working_directory: ${{ inputs.working_directory }}
+          environment: ${{ inputs.environment }}
+          aws_region: ${{ inputs.aws_region }}
           command: plan
           args: -out=tfplan
 
@@ -97,5 +105,7 @@ jobs:
         uses: KarthikKunchala23/gp-github-actions/terraform@main
         with:
           working_directory: ${{ inputs.working_directory }}
+          environment: ${{ inputs.environment }}
+          aws_region: ${{ inputs.aws_region }}
           command: apply
           args: -auto-approve tfplan

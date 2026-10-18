@@ -1,0 +1,209 @@
+
+name: Reusable Platform Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      scan_terraform:
+        description: Scan Terraform IaC
+        type: boolean
+        default: true
+      scan_application_code:
+        description: Scan Python and Java source code
+        type: boolean
+        default: true
+      scan_container:
+        description: Build and scan the Docker image
+        type: boolean
+        default: false
+      dockerfile:
+        description: Dockerfile path relative to repository root
+        type: string
+        default: Dockerfile
+      build_context:
+        description: Docker build context
+        type: string
+        default: .
+      image_name:
+        description: Local image name and tag
+        type: string
+        default: platform-app:ci
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  security:
+    name: Platform Security Checks
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      # ------------------------------------------------
+      # 1. Microsoft Security DevOps
+      # ------------------------------------------------
+      - name: Run MSDO
+        id: msdo
+        uses: microsoft/security-devops-action@v1
+        continue-on-error: true
+        with:
+          tools: ${{ inputs.scan_terraform && inputs.scan_application_code && 'bandit,checkov,terrascan,trivy' || inputs.scan_terraform && 'checkov,terrascan,trivy' || inputs.scan_application_code && 'bandit,trivy' || 'trivy' }}
+
+      - name: Copy MSDO SARIF report
+        if: always()
+        env:
+          SARIF_SOURCE: ${{ steps.msdo.outputs.sarifFile }}
+        run: |
+          if [ -n "$SARIF_SOURCE" ] && [ -f "$SARIF_SOURCE" ]; then
+            cp "$SARIF_SOURCE" reports/msdo-results.sarif
+          else
+            echo "MSDO SARIF was not generated."
+          fi
+
+      # ------------------------------------------------
+      # 2. Terraform security gate
+      # ------------------------------------------------
+      - name: Install Checkov
+        if: inputs.scan_terraform
+        run: python3 -m pip install checkov
+
+      - name: Scan Terraform - High and Critical
+        id: checkov
+        if: inputs.scan_terraform
+        continue-on-error: true
+        run: |
+          checkov \
+            --directory . \
+            --framework terraform \
+            --hard-fail-on HIGH,CRITICAL \
+            --output json \
+            > reports/checkov-results.json
+
+      # ------------------------------------------------
+      # 3. Application SAST
+      # ------------------------------------------------
+      - name: Install Semgrep
+        if: inputs.scan_application_code
+        run: python3 -m pip install semgrep
+
+      - name: Scan Java and Python source
+        id: semgrep
+        if: inputs.scan_application_code
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config p/security-audit \
+            --sarif \
+            --output reports/semgrep-results.sarif \
+            --error \
+            .
+
+      # ------------------------------------------------
+      # 4. Dependency and filesystem vulnerabilities
+      # ------------------------------------------------
+      - name: Trivy filesystem security scan
+        id: trivy_fs
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.31.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: reports/trivy-filesystem-results.json
+          exit-code: '1'
+
+      # ------------------------------------------------
+      # 5. Docker image security
+      # ------------------------------------------------
+      - name: Build container image
+        if: inputs.scan_container
+        run: |
+          docker build \
+            --file "${{ inputs.dockerfile }}" \
+            --tag "${{ inputs.image_name }}" \
+            "${{ inputs.build_context }}"
+
+      - name: Trivy container image scan
+        id: trivy_image
+        if: inputs.scan_container
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.31.0
+        with:
+          scan-type: image
+          image-ref: ${{ inputs.image_name }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: reports/trivy-image-results.json
+          exit-code: '1'
+
+      # ------------------------------------------------
+      # 6. Upload reports even if a scanner fails
+      # ------------------------------------------------
+      - name: Upload platform security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-security-reports-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ------------------------------------------------
+      # 7. Final security quality gate
+      # ------------------------------------------------
+      - name: Enforce security gates
+        if: always()
+        env:
+          TERRAFORM_SCAN: ${{ inputs.scan_terraform }}
+          APP_SCAN: ${{ inputs.scan_application_code }}
+          CONTAINER_SCAN: ${{ inputs.scan_container }}
+          CHECKOV_RESULT: ${{ steps.checkov.outcome }}
+          SEMGREP_RESULT: ${{ steps.semgrep.outcome }}
+          TRIVY_FS_RESULT: ${{ steps.trivy_fs.outcome }}
+          TRIVY_IMAGE_RESULT: ${{ steps.trivy_image.outcome }}
+        run: |
+          failed=0
+
+          if [ "$TERRAFORM_SCAN" = "true" ] &&
+             [ "$CHECKOV_RESULT" != "success" ]; then
+            echo "::error::Terraform security gate failed."
+            failed=1
+          fi
+
+          if [ "$APP_SCAN" = "true" ] &&
+             [ "$SEMGREP_RESULT" != "success" ]; then
+            echo "::error::Application SAST gate failed."
+            failed=1
+          fi
+
+          if [ "$TRIVY_FS_RESULT" != "success" ]; then
+            echo "::error::Filesystem/dependency security gate failed."
+            failed=1
+          fi
+
+          if [ "$CONTAINER_SCAN" = "true" ] &&
+             [ "$TRIVY_IMAGE_RESULT" != "success" ]; then
+            echo "::error::Container image security gate failed."
+            failed=1
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "All configured security gates passed."
