@@ -8,26 +8,37 @@ on:
         description: Enable all Trivy security scans
         type: boolean
         default: false
+
       scan_terraform:
         description: Scan Terraform IaC
         type: boolean
         default: true
+
       scan_application_code:
-        description: Scan Python and Java source code
+        description: Scan Java or Python application code
         type: boolean
         default: true
+
+      app_language:
+        description: Application language - auto, java, python, or both
+        type: string
+        default: auto
+
       scan_container:
-        description: Build and scan the Docker image
+        description: Build and scan the Docker image using Trivy
         type: boolean
         default: false
+
       dockerfile:
         description: Dockerfile path relative to repository root
         type: string
         default: Dockerfile
+
       build_context:
         description: Docker build context
         type: string
         default: .
+
       image_name:
         description: Local image name and tag
         type: string
@@ -54,14 +65,103 @@ jobs:
         run: mkdir -p reports
 
       # ------------------------------------------------
-      # 1. Microsoft Security DevOps
+      # 1. Detect application language and required tools
+      # ------------------------------------------------
+      - name: Detect application language
+        id: detect
+        env:
+          APP_LANGUAGE: ${{ inputs.app_language }}
+          SCAN_TERRAFORM: ${{ inputs.scan_terraform }}
+          SCAN_APPLICATION: ${{ inputs.scan_application_code }}
+          SCAN_TRIVY: ${{ inputs.scan_trivy }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          language="${APP_LANGUAGE,,}"
+
+          case "$language" in
+            auto)
+              java_found=false
+              python_found=false
+
+              if [[ -f pom.xml ||
+                    -f build.gradle ||
+                    -f build.gradle.kts ]]; then
+                java_found=true
+              fi
+
+              if [[ -f requirements.txt ||
+                    -f pyproject.toml ||
+                    -f setup.py ||
+                    -f Pipfile ]]; then
+                python_found=true
+              fi
+
+              if [[ "$java_found" == true &&
+                    "$python_found" == true ]]; then
+                language="both"
+              elif [[ "$java_found" == true ]]; then
+                language="java"
+              elif [[ "$python_found" == true ]]; then
+                language="python"
+              else
+                language="unknown"
+              fi
+              ;;
+            java|python|both)
+              ;;
+            *)
+              echo "::error::app_language must be auto, java, python, or both."
+              exit 1
+              ;;
+          esac
+
+          echo "Detected application language: $language"
+          echo "language=$language" >> "$GITHUB_OUTPUT"
+
+          if [[ "$SCAN_APPLICATION" == true &&
+                "$language" == unknown ]]; then
+            echo "::error::Unable to detect Java or Python. Set app_language explicitly or add the appropriate project manifest."
+            exit 1
+          fi
+
+          tools=""
+
+          add_tool() {
+            if [[ -n "$tools" ]]; then
+              tools="${tools},$1"
+            else
+              tools="$1"
+            fi
+          }
+
+          if [[ "$SCAN_TERRAFORM" == true ]]; then
+            add_tool checkov
+            add_tool terrascan
+          fi
+
+          if [[ "$SCAN_APPLICATION" == true &&
+                ( "$language" == python ||
+                  "$language" == both ) ]]; then
+            add_tool bandit
+          fi
+
+          echo "msdo_tools=$tools" >> "$GITHUB_OUTPUT"
+          echo "MSDO tools: ${tools:-none}"
+
+      # ------------------------------------------------
+      # 2. Microsoft Security DevOps
+      #    Bandit only for Python; Checkov/Terrascan
+      #    only when Terraform scanning is enabled.
       # ------------------------------------------------
       - name: Run MSDO
         id: msdo
+        if: steps.detect.outputs.msdo_tools != ''
         uses: microsoft/security-devops-action@v1
         continue-on-error: true
         with:
-          tools: ${{ inputs.scan_terraform && inputs.scan_application_code && 'bandit,checkov,terrascan,trivy' || inputs.scan_terraform && 'checkov,terrascan,trivy' || inputs.scan_application_code && 'bandit,trivy' || 'trivy' }}
+          tools: ${{ steps.detect.outputs.msdo_tools }}
 
       - name: Copy MSDO SARIF report
         if: always()
@@ -75,7 +175,7 @@ jobs:
           fi
 
       # ------------------------------------------------
-      # 2. Terraform security gate
+      # 3. Terraform security
       # ------------------------------------------------
       - name: Install Checkov
         if: inputs.scan_terraform
@@ -94,7 +194,7 @@ jobs:
             > reports/checkov-results.json
 
       # ------------------------------------------------
-      # 3. Application SAST
+      # 4. Application SAST - Java and/or Python
       # ------------------------------------------------
       - name: Install Semgrep
         if: inputs.scan_application_code
@@ -113,7 +213,8 @@ jobs:
             .
 
       # ------------------------------------------------
-      # 4. Dependency and filesystem vulnerabilities
+      # 5. Trivy filesystem scan
+      #    Runs ONLY when scan_trivy is true.
       # ------------------------------------------------
       - name: Trivy filesystem security scan
         id: trivy_fs
@@ -131,7 +232,43 @@ jobs:
           exit-code: '1'
 
       # ------------------------------------------------
-      # 5. Docker image security
+      # 6. Build Java application before Docker build
+      # ------------------------------------------------
+      - name: Set up Java
+        if: >-
+          inputs.scan_trivy &&
+          inputs.scan_container &&
+          contains(steps.detect.outputs.language, 'java')
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build Java application
+        if: >-
+          inputs.scan_trivy &&
+          inputs.scan_container &&
+          contains(steps.detect.outputs.language, 'java')
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -f ./mvnw ]]; then
+            chmod +x ./mvnw
+            ./mvnw --batch-mode clean package -DskipTests
+          elif [[ -f pom.xml ]]; then
+            mvn --batch-mode clean package -DskipTests
+          elif [[ -f ./gradlew ]]; then
+            chmod +x ./gradlew
+            ./gradlew build -x test
+          else
+            echo "::error::Java build files found, but no Maven or Gradle build command is available."
+            exit 1
+          fi
+
+      # ------------------------------------------------
+      # 7. Build Docker image
       # ------------------------------------------------
       - name: Build container image
         if: inputs.scan_container && inputs.scan_trivy
@@ -141,6 +278,9 @@ jobs:
             --tag "${{ inputs.image_name }}" \
             "${{ inputs.build_context }}"
 
+      # ------------------------------------------------
+      # 8. Trivy container image scan
+      # ------------------------------------------------
       - name: Trivy container image scan
         id: trivy_image
         if: inputs.scan_container && inputs.scan_trivy
@@ -157,7 +297,7 @@ jobs:
           exit-code: '1'
 
       # ------------------------------------------------
-      # 6. Upload reports even if a scanner fails
+      # 9. Upload reports
       # ------------------------------------------------
       - name: Upload platform security reports
         if: always()
@@ -169,7 +309,7 @@ jobs:
           retention-days: 30
 
       # ------------------------------------------------
-      # 7. Final security quality gate
+      # 10. Final security quality gate
       # ------------------------------------------------
       - name: Enforce security gates
         if: always()
@@ -177,40 +317,57 @@ jobs:
           TERRAFORM_SCAN: ${{ inputs.scan_terraform }}
           APP_SCAN: ${{ inputs.scan_application_code }}
           CONTAINER_SCAN: ${{ inputs.scan_container }}
+          TRIVY_ENABLED: ${{ inputs.scan_trivy }}
+
+          DETECT_RESULT: ${{ steps.detect.outcome }}
+          MSDO_TOOLS: ${{ steps.detect.outputs.msdo_tools }}
+          MSDO_RESULT: ${{ steps.msdo.outcome }}
+
           CHECKOV_RESULT: ${{ steps.checkov.outcome }}
           SEMGREP_RESULT: ${{ steps.semgrep.outcome }}
           TRIVY_FS_RESULT: ${{ steps.trivy_fs.outcome }}
           TRIVY_IMAGE_RESULT: ${{ steps.trivy_image.outcome }}
-          TRIVY_ENABLED: ${{ inputs.scan_trivy }}
+        shell: bash
         run: |
           failed=0
 
-          if [ "$TERRAFORM_SCAN" = "true" ] &&
-             [ "$CHECKOV_RESULT" != "success" ]; then
+          if [[ "$DETECT_RESULT" != "success" ]]; then
+            echo "::error::Application detection or configuration failed."
+            failed=1
+          fi
+
+          if [[ -n "$MSDO_TOOLS" &&
+                "$MSDO_RESULT" != "success" ]]; then
+            echo "::error::MSDO execution failed."
+            failed=1
+          fi
+
+          if [[ "$TERRAFORM_SCAN" == true &&
+                "$CHECKOV_RESULT" != "success" ]]; then
             echo "::error::Terraform security gate failed."
             failed=1
           fi
 
-          if [ "$APP_SCAN" = "true" ] &&
-             [ "$SEMGREP_RESULT" != "success" ]; then
+          if [[ "$APP_SCAN" == true &&
+                "$SEMGREP_RESULT" != "success" ]]; then
             echo "::error::Application SAST gate failed."
             failed=1
           fi
 
-          if [ "$TRIVY_ENABLED" == "true" ]; then
-            if [ "$TRIVY_FS_RESULT" != "success" ]; then
-                echo "::error::Filesystem/dependency security gate failed."
-                failed=1
+          if [[ "$TRIVY_ENABLED" == true ]]; then
+            if [[ "$TRIVY_FS_RESULT" != "success" ]]; then
+              echo "::error::Trivy filesystem/dependency gate failed."
+              failed=1
             fi
 
-            if [ "$CONTAINER_SCAN" = "true" ] &&
-                [ "$TRIVY_IMAGE_RESULT" != "success" ]; then
-                echo "::error::Container image security gate failed."
-                failed=1
+            if [[ "$CONTAINER_SCAN" == true &&
+                  "$TRIVY_IMAGE_RESULT" != "success" ]]; then
+              echo "::error::Trivy image security gate failed."
+              failed=1
             fi
           fi
 
-          if [ "$failed" -ne 0 ]; then
+          if [[ "$failed" -ne 0 ]]; then
             exit 1
           fi
 
