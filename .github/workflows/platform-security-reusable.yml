@@ -216,20 +216,26 @@ jobs:
       # 5. Trivy filesystem scan
       #    Runs ONLY when scan_trivy is true.
       # ------------------------------------------------
+
       - name: Trivy filesystem security scan
         id: trivy_fs
         if: inputs.scan_trivy
         continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.31.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,misconfig,secret
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          format: json
-          output: reports/trivy-filesystem-results.json
-          exit-code: '1'
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            aquasec/trivy:0.63.0 \
+            fs \
+            --scanners vuln,misconfig,secret \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /work/reports/trivy-filesystem-results.json \
+            --exit-code 1 \
+            /work
+
 
       # ------------------------------------------------
       # 6. Build Java application before Docker build
@@ -281,20 +287,28 @@ jobs:
       # ------------------------------------------------
       # 8. Trivy container image scan
       # ------------------------------------------------
+
       - name: Trivy container image scan
         id: trivy_image
-        if: inputs.scan_container && inputs.scan_trivy
+        if: inputs.scan_trivy && inputs.scan_container
         continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.31.0
-        with:
-          scan-type: image
-          image-ref: ${{ inputs.image_name }}
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          format: json
-          output: reports/trivy-image-results.json
-          exit-code: '1'
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.63.0 \
+            image \
+            --scanners vuln,secret \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /work/reports/trivy-image-results.json \
+            --exit-code 1 \
+            "$IMAGE_NAME"
+
 
       # ------------------------------------------------
       # 9. Upload reports
